@@ -1,8 +1,6 @@
 package main
 
 import (
-    "encoding/json"
-    "fmt"
     "unsafe"
 )
 
@@ -10,7 +8,6 @@ import (
 // https://github.com/tinygo-org/tinygo/blob/2a76ceb7dd5ea5a834ec470b724882564d9681b3/src/runtime/arch_tinygowasm_malloc.go#L7
 var allocs = make(map[uintptr][]byte)
 
-//go:wasm-module cdc
 //export malloc
 func libc_malloc(size uintptr) unsafe.Pointer {
 	if size == 0 {
@@ -22,7 +19,6 @@ func libc_malloc(size uintptr) unsafe.Pointer {
 	return ptr
 }
 
-//go:wasm-module cdc
 //export free
 func libc_free(ptr unsafe.Pointer) {
 	if ptr == nil {
@@ -35,28 +31,58 @@ func libc_free(ptr unsafe.Pointer) {
 	}
 }
 
-func readBufferFromMemory(bufferPosition *uint32, length uint32) []byte {
-    subjectBuffer := make([]byte, length)
-    pointer := uintptr(unsafe.Pointer(bufferPosition))
-    for i := 0; i < int(length); i++ {
-        s := *(*int32)(unsafe.Pointer(pointer + uintptr(i)))
-        subjectBuffer[i] = byte(s)
+func readCString(offset uint32) string {
+    length := 0
+    for {
+        s := *(*int32)(unsafe.Pointer(uintptr(offset) + uintptr(length)))
+        if (byte(s) == 0) {
+            break
+        }
+        length++
     }
-    return subjectBuffer
+
+    buffer := make([]byte, length)
+    for i := 0; i < int(length); i++ {
+        s := *(*int32)(unsafe.Pointer(uintptr(offset) + uintptr(i)))
+        buffer[i] = byte(s)
+    }
+    return string(buffer)
 }
 
-//go:wasm-module cdc
-//export change
-func change(destinationPtr *uint32, destinationLength uint32, keyPtr *uint32, keyLength uint32, valuePtr *uint32, valueLength uint32) {
-    destination := string(readBufferFromMemory(destinationPtr, destinationLength))
-    keyBytes := readBufferFromMemory(keyPtr, keyLength)
-    value := string(readBufferFromMemory(valuePtr, valueLength))
-
-    var keyJson map[string] interface{}
-    json.Unmarshal(keyBytes, &keyJson)
-    fmt.Printf("Received message for destination '%s', with id = '%.0f' and content %s\n", destination, keyJson["id"].(float64), value)
+// inspired by:
+// https://github.com/tinygo-org/tinygo/blob/2a76ceb7dd5ea5a834ec470b724882564d9681b3/src/runtime/string.go#L278
+func writeCString(offset uintptr, str string) {
+    stringData := []byte(str)
+    for i := 0; i < len(stringData); i++ {
+        *(*byte)(unsafe.Pointer(uintptr(offset) + uintptr(i))) = stringData[i]
+    }
+    *(*byte)(unsafe.Pointer(uintptr(offset) + uintptr(len(stringData)))) = 0 // trailing 0 byte
 }
 
-func main() {
+//go:wasm-module env
+//export struct_get_string
+func envStructGetString(structPtr, fieldNamePtr uint32) uint32
+
+func structGetString(structPtr uint32, fieldName string) string {
+    return "ciao"
 }
 
+//export process
+func process(structPtr uint32) uint32 {
+    envStructGetString(structPtr, 2)
+
+    str := readCString(structPtr)
+
+    var result = "giusto"
+    if (str != "ciao") {
+        result = "sbagliato"
+    }
+
+    var resultLen = len(result) + 1
+    var resultPtr = libc_malloc(uintptr(resultLen))
+    writeCString(uintptr(resultPtr), result)
+    // return uint32(uintptr(resultPtr))
+    return uint32(uintptr(resultPtr))
+}
+
+func main() {}

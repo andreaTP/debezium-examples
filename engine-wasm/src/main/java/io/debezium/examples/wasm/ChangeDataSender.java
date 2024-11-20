@@ -35,9 +35,8 @@ public class ChangeDataSender implements Runnable {
     private final DebeziumEngine<ChangeEvent<String, String>> engine;
 
     private final ExportFunction processFunction;
-    private final ExportFunction allocFunction;
-    private final ExportFunction deallocFunction;
     private final Memory memory;
+    private final Instance instance;
 
     public ChangeDataSender() {
         config = new Properties();
@@ -62,16 +61,15 @@ public class ChangeDataSender implements Runnable {
 
         memory = new Memory(new MemoryLimits(2, MemoryLimits.MAX_PAGES));
         final var module = Parser.parse(getClass().getResourceAsStream("/compiled/cdc.wasm"));
-        Instance instance = Instance.builder(module)
+        this.instance = Instance.builder(module)
                 .withImportValues(
                         ImportValues.builder()
                                 .addMemory(new ImportMemory("env", "memory", memory))
+                                .addFunction(KafkaStructBindings.getString())
                                 .build()
                 )
                 .build();
         processFunction = instance.export("change");
-        allocFunction = instance.export("malloc");
-        deallocFunction = instance.export("free");
     }
 
     @Override
@@ -96,23 +94,27 @@ public class ChangeDataSender implements Runnable {
     private void sendRecord(ChangeEvent<String, String> record) {
         LOGGER.debug("Passing change event key = '{}', value = '{}' to WASM module", record.key(), record.value());
 
-        final var destinationLen = record.destination().getBytes().length;
-        final var destinationPtr = allocFunction.apply(destinationLen)[0];
-        memory.writeString((int) destinationPtr, record.destination());
+        //        final var destinationLen = record.destination().getBytes().length;
+        //        final var destinationPtr = allocFunction.apply(destinationLen)[0];
+        //        memory.writeString((int) destinationPtr, record.destination());
+        //
+        //        final var keyLen = record.key().getBytes().length;
+        //        final var keyPtr = allocFunction.apply(keyLen)[0];
+        //        memory.writeString((int) keyPtr, record.key());
+        //
+        //        final var valueLen = record.value().getBytes().length;
+        //        final var valuePtr = allocFunction.apply(valueLen)[0];
+        //        memory.writeString((int) valuePtr, record.value());
 
-        final var keyLen = record.key().getBytes().length;
-        final var keyPtr = allocFunction.apply(keyLen)[0];
-        memory.writeString((int) keyPtr, record.key());
+        this.instance.export("malloc")
 
-        final var valueLen = record.value().getBytes().length;
-        final var valuePtr = allocFunction.apply(valueLen)[0];
-        memory.writeString((int) valuePtr, record.value());
 
-        processFunction.apply(destinationPtr, destinationLen, keyPtr, keyLen, valuePtr, valueLen);
+        var result = processFunction.apply(123)[0];
+        System.out.println("Result is " + result);
 
-        deallocFunction.apply(valuePtr);
-        deallocFunction.apply(keyPtr);
-        deallocFunction.apply(destinationPtr);
+        //        deallocFunction.apply(valuePtr);
+        //        deallocFunction.apply(keyPtr);
+        //        deallocFunction.apply(destinationPtr);
     }
 
     public static void main(String[] args) {
